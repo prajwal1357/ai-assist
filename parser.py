@@ -9,8 +9,8 @@ def extract_json(text):
         return match.group(0)
     return None
 
-def parse_command(user_input):
-    raw = ask_llm(user_input)
+def parse_command(user_input, feedback=""):
+    raw = ask_llm(user_input, feedback)
     print("RAW:", raw)
 
     json_str = extract_json(raw)

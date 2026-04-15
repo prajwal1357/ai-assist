@@ -1,42 +1,46 @@
 import requests
+import json
+from memory import get_all_memories
 
-def ask_llm(user_input):
+def ask_llm(user_input, feedback=""):
+    memories = get_all_memories()
+    memory_context = json.dumps(memories) if memories else "None"
+
+    feedback_text = f"\nSystem Feedback from previous step: {feedback}\n" if feedback else ""
+
     prompt = f"""
-You are a system assistant.
+You are an advanced system assistant named Shrey.
 
-Return a JSON ARRAY of actions.
+MEMORY CONTEXT:
+{memory_context}
 
-STRICT RULES:
-- Output must be a LIST []
-- Each item must be an object
-- No explanation
-- No extra text
+Return a strict JSON ARRAY of actions to fulfill the user request.
+Break it down into logical steps. Do not include introductory text, markdown formatting outside of the JSON block, or conversational filler. ONLY return valid JSON.
 
 Allowed actions:
-- open_app
-- type_text
-- ask
-- unknown
+1. open_app (app name)
+2. type_text (text to type)
+3. hotkey (keys to press, e.g. "ctrl,c")
+4. open_browser (url)
+5. browser_search (query text)
+6. remember (key, value)
+7. ask (question to ask user for clarification)
 
 Format:
 [
   {{
-    "action": "",
-    "app": "",
+    "action": "open_app",
+    "app": "chrome",
     "text": "",
-    "question": ""
+    "url": "",
+    "keys": "",
+    "question": "",
+    "key": "",
+    "value": ""
   }}
 ]
 
-Examples:
-
-User: open chrome and type hello
-[
-  {{ "action": "open_app", "app": "chrome", "text": "", "question": "" }},
-  {{ "action": "type_text", "app": "", "text": "hello", "question": "" }}
-]
-
-User: {user_input}
+User: {user_input}{feedback_text}
 """
 
     try:
@@ -50,7 +54,7 @@ User: {user_input}
         )
         res.raise_for_status()
         data = res.json()
-        return data.get("response", "")
+        return data.get("response", "[]")
     except requests.exceptions.RequestException as e:
         print(f"LLM Connection Error: {e}")
         return "[]"
