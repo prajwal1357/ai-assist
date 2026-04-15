@@ -1,33 +1,63 @@
 import os
 import time
-import pyautogui
 import webbrowser
+import urllib.parse
+import pyautogui
 from pywinauto import Application, Desktop
 
-try:
-    from selenium import webdriver
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-    HAVE_SELENIUM = True
-except ImportError:
-    HAVE_SELENIUM = False
-
 app_instance = None
-browser_driver = None
 
-def get_browser():
-    global browser_driver
-    if not browser_driver:
-        if HAVE_SELENIUM:
-            try:
-                options = webdriver.EdgeOptions()
-                options.add_experimental_option("detach", True)
-                browser_driver = webdriver.Edge(options=options)
-            except Exception:
-                options = webdriver.ChromeOptions()
-                options.add_experimental_option("detach", True)
-                browser_driver = webdriver.Chrome(options=options)
-    return browser_driver
+# Map of common app names to their Windows launch commands/protocols
+APP_LAUNCH_MAP = {
+    "whatsapp": "whatsapp://",
+    "telegram": "tg://",
+    "discord": "discord://",
+    "spotify": "spotify://",
+    "slack": "slack://",
+    "teams": "msteams://",
+    "settings": "ms-settings:",
+    "store": "ms-windows-store:",
+    "calculator": "calc.exe",
+    "notepad": "notepad.exe",
+    "paint": "mspaint.exe",
+    "wordpad": "wordpad.exe",
+    "cmd": "cmd.exe",
+    "powershell": "powershell.exe",
+    "explorer": "explorer.exe",
+    "chrome": "chrome",
+    "brave": "brave",
+    "firefox": "firefox",
+    "edge": "msedge",
+}
+
+def launch_app(app_name):
+    """Reliably launch any Windows app by name."""
+    app = app_name.lower().strip()
+
+    # Check our known map first
+    if app in APP_LAUNCH_MAP:
+        target = APP_LAUNCH_MAP[app]
+        try:
+            if "://" in target or target.endswith(":"):
+                # UWP protocol-based app
+                os.startfile(target)
+            elif target.endswith(".exe"):
+                # Classic Win32 executable
+                os.system(f"start \"\" \"{target}\"")
+            else:
+                # Browser-type apps
+                os.system(f"start {target}")
+            return f"Opened {app} successfully."
+        except Exception as e:
+            return f"Failed to open {app}: {e}"
+    else:
+        # Fallback: try generic start command
+        try:
+            os.system(f"start {app}")
+            return f"Opened {app} via generic start."
+        except Exception as e:
+            return f"Failed to open {app}: {e}"
+
 
 def execute(cmd):
     global app_instance
@@ -35,13 +65,13 @@ def execute(cmd):
     action = cmd.get("action")
     feedback = ""
 
+    # ─── OPEN APP ─────────────────────────────────────────
     if action == "open_app":
-        app = cmd.get("app", "").lower()
+        app = cmd.get("app", "").lower().strip()
         if "notepad" in app:
             try:
                 os.system("start notepad")
                 time.sleep(1.5)
-                from pywinauto import Desktop
                 windows = Desktop(backend="uia").windows(title_re=".*Notepad.*")
                 if windows:
                     target_pid = windows[0].process_id()
@@ -49,23 +79,20 @@ def execute(cmd):
                     app_instance.top_window().set_focus()
                     feedback = "Notepad opened successfully."
                 else:
-                    feedback = "Could not find a Notepad window after launch."
+                    feedback = "Could not find Notepad window."
                     print(feedback)
             except Exception as e:
-                feedback = f"Failed to start or connect to notepad: {e}"
+                feedback = f"Failed to open notepad: {e}"
                 print(feedback)
         else:
-            try:
-                os.system(f"start {app}")
-                feedback = f"Opened {app} using generic command."
-            except Exception as e:
-                feedback = f"Failed to open app {app}: {e}"
-                print(feedback)
+            feedback = launch_app(app)
 
+    # ─── TYPE TEXT ────────────────────────────────────────
     elif action == "type_text":
         text = cmd.get("text", "")
-        # Use pywinauto if linked, else pyautogui
-        if app_instance:
+        if not text:
+            feedback = "No text provided to type."
+        elif app_instance:
             try:
                 window = app_instance.top_window()
                 window.set_focus()
@@ -74,66 +101,60 @@ def execute(cmd):
             except Exception as e:
                 print(f"Pywinauto typing failed: {e}. Falling back to PyAutoGUI.")
                 pyautogui.write(text, interval=0.02)
-                feedback = f"Typed '{text}' via PyAutoGUI."
+                feedback = f"Typed '{text}' via PyAutoGUI fallback."
         else:
             pyautogui.write(text, interval=0.02)
             feedback = f"Typed '{text}' via PyAutoGUI."
 
+    # ─── HOTKEY ───────────────────────────────────────────
     elif action == "hotkey":
         keys = cmd.get("keys", "")
         if keys:
             key_list = [k.strip() for k in keys.split(",")]
             pyautogui.hotkey(*key_list)
-            feedback = f"Pressed hotkey {keys}."
+            feedback = f"Pressed hotkey: {keys}"
 
+    # ─── PRESS KEY ────────────────────────────────────────
+    elif action == "press":
+        key = cmd.get("key", "")
+        if key:
+            pyautogui.press(key.lower().strip())
+            feedback = f"Pressed key: {key}"
+
+    # ─── SLEEP ────────────────────────────────────────────
+    elif action == "sleep":
+        duration = float(cmd.get("duration", 1))
+        time.sleep(duration)
+        feedback = f"Waited {duration}s."
+
+    # ─── OPEN BROWSER URL ────────────────────────────────
     elif action == "open_browser":
         url = cmd.get("url", "")
         if url:
             if not url.startswith("http"):
                 url = "https://" + url
-            if HAVE_SELENIUM:
-                try:
-                    driver = get_browser()
-                    driver.get(url)
-                    feedback = f"Selenium navigated to: {url}"
-                except Exception as e:
-                    print("Selenium fail, fallback to webbrowser:", e)
-                    webbrowser.open(url)
-                    feedback = f"Opened browser via native fallback: {url}"
-            else:
-                webbrowser.open(url)
-                feedback = f"Opened browser via native fallback: {url}"
+            webbrowser.open(url)
+            feedback = f"Opened browser: {url}"
 
+    # ─── BROWSER SEARCH (Google/YouTube) ─────────────────
     elif action == "browser_search":
         query = cmd.get("text", "")
+        platform = cmd.get("platform", "google").lower()
         if query:
-            if HAVE_SELENIUM:
-                try:
-                    driver = get_browser()
-                    driver.get("https://www.google.com")
-                    search_box = driver.find_element(By.NAME, "q")
-                    search_box.send_keys(query)
-                    search_box.send_keys(Keys.RETURN)
-                    feedback = f"Searched google for '{query}'"
-                except Exception as e:
-                    print(f"Browser search failed: {e}")
-                    feedback = "Selenium search failed."
+            encoded = urllib.parse.quote_plus(query)
+            if "youtube" in platform:
+                url = f"https://www.youtube.com/results?search_query={encoded}"
             else:
-                webbrowser.open(f"https://www.google.com/search?q={query}")
-                feedback = "Searched via native browser."
+                url = f"https://www.google.com/search?q={encoded}"
+            webbrowser.open(url)
+            feedback = f"Searched '{query}' on {platform}."
 
+    # ─── ASK (handled by main.py) ─────────────────────────
     elif action == "ask":
-        question = cmd.get("question", "")
-        if not question: question = "Can you provide more details?"
-        print(f"\n[Shrey]: {question}")
-        try:
-            from voice import speak
-            speak(question)
-        except:
-            pass
-        ans = input("You: ")
-        feedback = f"User answered: {ans}"
+        # Handled by the orchestration loop in main.py
+        pass
 
+    # ─── REMEMBER ─────────────────────────────────────────
     elif action == "remember":
         key = cmd.get("key", "")
         val = cmd.get("value", "")
@@ -141,10 +162,11 @@ def execute(cmd):
             from memory import save_memory
             save_memory(key, val)
             print(f"-> Learned: {key} = {val}")
-            feedback = f"Remembered {key} over persistent memory."
+            feedback = f"Remembered {key}."
 
+    # ─── UNKNOWN ──────────────────────────────────────────
     else:
-        feedback = f"Unhandled action {action}"
+        feedback = f"Unhandled action: {action}"
         print(feedback)
 
     return feedback

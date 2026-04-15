@@ -10,7 +10,7 @@ def speak(text):
     except Exception as e:
         print(f"[TTS Disabled] Said: {text}")
 
-def listen_for_wake_word(wake_word="hello"):
+def listen_for_wake_word(wake_word="jarvis"):
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print(f"\n[Listening for wake word '{wake_word}']...")
